@@ -17,6 +17,10 @@ import org.objectweb.asm.Handle;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.InsnNode;
+import org.objectweb.asm.tree.LabelNode;
+import org.objectweb.asm.tree.LineNumberNode;
 import org.objectweb.asm.tree.MethodNode;
 
 /**
@@ -33,6 +37,28 @@ public final class LabelFlowAnalyzer extends MethodVisitor {
 	 *            Method to mark labels
 	 */
 	public static void markLabels(final MethodNode method) {
+		// Dirty hack to put probes at conditional jump targets that are followed by methods: move the line number
+		// label to after a frame, then also add a NOP so that the label is a "successor" instruction
+
+		// A cleaner fix would likely require much more invasive changes to existing JaCoCo code,
+		// and without knowing the difficulty of getting it merged upstream, this is much easier to
+		// keep private and up-to-date
+
+		for(AbstractInsnNode each : method.instructions){
+			if (each.getType() == AbstractInsnNode.LINE) {
+				LineNumberNode line = (LineNumberNode) each;
+				if(line.getNext() != null && line.getNext().getType() == AbstractInsnNode.FRAME){
+					AbstractInsnNode frame = line.getNext();
+					LabelNode newLabel = new LabelNode(new Label());
+				    method.instructions.remove(each);
+				    method.instructions.insert(frame, newLabel);
+				    method.instructions.insert(newLabel, line);
+					method.instructions.insert(frame, new InsnNode(Opcodes.NOP));
+				    line.start = newLabel;
+				}
+			}
+		}
+
 		// We do not use the accept() method as ASM resets labels after every
 		// call to accept()
 		final MethodVisitor lfa = new LabelFlowAnalyzer();
