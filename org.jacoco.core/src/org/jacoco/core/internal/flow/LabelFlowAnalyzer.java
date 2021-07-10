@@ -17,11 +17,10 @@ import org.objectweb.asm.Handle;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.tree.AbstractInsnNode;
-import org.objectweb.asm.tree.InsnNode;
-import org.objectweb.asm.tree.LabelNode;
-import org.objectweb.asm.tree.LineNumberNode;
-import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.*;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Method visitor to collect flow related information about the {@link Label}s
@@ -37,24 +36,52 @@ public final class LabelFlowAnalyzer extends MethodVisitor {
 	 *            Method to mark labels
 	 */
 	public static void markLabels(final MethodNode method) {
-		// Dirty hack to put probes at conditional jump targets that are followed by methods: move the line number
-		// label to after a frame, then also add a NOP so that the label is a "successor" instruction
+		// Dirty hack to put probes at conditional jump targets that are
+		// followed by methods: move the line number
+		// label to after a frame, then also add a NOP so that the label is a
+		// "successor" instruction
 
-		// A cleaner fix would likely require much more invasive changes to existing JaCoCo code,
-		// and without knowing the difficulty of getting it merged upstream, this is much easier to
+		// A cleaner fix would likely require much more invasive changes to
+		// existing JaCoCo code,
+		// and without knowing the difficulty of getting it merged upstream,
+		// this is much easier to
 		// keep private and up-to-date
 
-		for(AbstractInsnNode each : method.instructions){
+		HashMap<LabelNode, LabelNode> labelsToPatchInFrames = new HashMap<LabelNode, LabelNode>();
+		for (AbstractInsnNode each : method.instructions) {
 			if (each.getType() == AbstractInsnNode.LINE) {
 				LineNumberNode line = (LineNumberNode) each;
-				if(line.getNext() != null && line.getNext().getType() == AbstractInsnNode.FRAME){
+				if (line.getNext() != null
+						&& line.getNext().getType() == AbstractInsnNode.FRAME) {
 					AbstractInsnNode frame = line.getNext();
 					LabelNode newLabel = new LabelNode(new Label());
-				    method.instructions.remove(each);
-				    method.instructions.insert(frame, newLabel);
-				    method.instructions.insert(newLabel, line);
-					method.instructions.insert(frame, new InsnNode(Opcodes.NOP));
-				    line.start = newLabel;
+					method.instructions.remove(line);
+					method.instructions.insert(frame, newLabel);
+					method.instructions.insert(newLabel, line);
+					method.instructions.insert(frame,
+							new InsnNode(Opcodes.NOP));
+					labelsToPatchInFrames.put(line.start, newLabel);
+					line.start = newLabel;
+				}
+			}
+		}
+		if (!labelsToPatchInFrames.isEmpty()) {
+			// Find and patch all frames that we broke. We do this after
+			// collecting all of the broken labels to handle
+			// any back-edges in the CFG that we broke, too.
+			for (AbstractInsnNode each : method.instructions) {
+				if (each.getType() == AbstractInsnNode.FRAME) {
+					FrameNode fr = (FrameNode) each;
+					if (fr.stack != null) {
+						for (int i = 0; i < fr.stack.size(); i++) {
+							for (Map.Entry<LabelNode, LabelNode> eachLabel : labelsToPatchInFrames
+									.entrySet()) {
+								if (fr.stack.get(i) == eachLabel.getKey()) {
+									fr.stack.set(i, eachLabel.getValue());
+								}
+							}
+						}
+					}
 				}
 			}
 		}
